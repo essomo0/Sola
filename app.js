@@ -146,16 +146,14 @@ function showLogin() {
 }
 
 async function checkFirstSetupNeeded() {
-  // Solo mostramos el enlace "Primera vez" si no hay ningún admin todavía.
-  // Las reglas públicas permiten leer users SOLO si tú eres el propio usuario o admin.
-  // Con las reglas actualizadas que pondremos, este chequeo puede fallar al
-  // no estar autenticado. Lo manejamos con try/catch.
+  // Si el documento settings/global ya existe, significa que ya se hizo
+  // el primer setup y NO debemos mostrar el enlace "Primera vez".
+  // Las reglas permiten lectura pública de este documento.
   const hint = document.getElementById('firstSetupHint');
   if (!hint) return;
   try {
-    const q = query(collection(db, 'users'), where('role', '==', 'admin'), limit(1));
-    const snap = await getDocs(q);
-    if (!snap.empty) {
+    const snap = await getDoc(doc(db, 'settings', 'global'));
+    if (snap.exists()) {
       hint.style.display = 'none';
       return;
     }
@@ -268,17 +266,16 @@ document.getElementById('setupFormEl').addEventListener('submit', async (e) => {
     errEl.classList.add('show');
     return;
   }
-  // Verificar que no exista ya un admin
+  // Verificar que no exista ya un admin (comprobando si settings/global existe)
   try {
-    const q = query(collection(db, 'users'), where('role', '==', 'admin'), limit(1));
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      errEl.textContent = 'Ya existe una cuenta de administrador. Pide a tu admin que cree tu cuenta.';
+    const settingsSnap = await getDoc(doc(db, 'settings', 'global'));
+    if (settingsSnap.exists()) {
+      errEl.textContent = 'Ya existe una cuenta de administrador. Pide al admin que cree tu cuenta.';
       errEl.classList.add('show');
       return;
     }
   } catch {
-    // Si falla (reglas restrictivas), intentamos crear y que las reglas bloqueen si hay admin
+    // Si falla (reglas restrictivas), las reglas del servidor bloquearán igualmente
   }
   try {
     const cred = await createUserWithEmailAndPassword(auth, email, pass);
