@@ -895,7 +895,7 @@
           <button class="tab-btn" data-tab="history">Historial</button>
           <button class="tab-btn" data-tab="machines">Máquinas</button>
           <button class="tab-btn" data-tab="calendar">Calendario</button>
-          <button class="tab-btn" data-tab="users" data-permission="admin">Usuarios</button>
+          <button class="tab-btn" data-tab="users" data-permission="viewUsers">Usuarios</button>
           <button class="tab-btn" data-tab="settings">Ajustes</button>
         </nav>
         <div class="user-chip" id="userChip" style="cursor:pointer;" title="Cambiar contraseña o cerrar sesión">
@@ -1051,7 +1051,7 @@
       <h2 class="section-title">Gestión <span>de usuarios</span></h2>
       <span class="section-sub">// Administración de cuentas y permisos</span>
 
-      <div class="card">
+      <div class="card" data-permission="createUsers">
         <div class="card-header">
           <div class="card-title">Crear nuevo usuario</div>
           <div class="card-tag">+ NUEVO</div>
@@ -1117,15 +1117,15 @@
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;">
           <div style="padding:16px;background:var(--bg-soft);border-radius:4px;border-left:3px solid #353535;">
             <div style="font-weight:700;margin-bottom:6px;">🛡 Administrador</div>
-            <div style="font-size:12px;color:var(--text-dim);line-height:1.6;">Acceso completo. Gestiona máquinas, calendario, usuarios y ajustes. Único que puede borrar registros del historial.</div>
+            <div style="font-size:12px;color:var(--text-dim);line-height:1.6;">Acceso completo. Único que puede crear usuarios, gestionar admins y borrar registros del historial. Gestiona máquinas, calendario y ajustes.</div>
           </div>
           <div style="padding:16px;background:var(--bg-soft);border-radius:4px;border-left:3px solid var(--sola-beige-dark);">
             <div style="font-weight:700;margin-bottom:6px;">✏ Edición</div>
-            <div style="font-size:12px;color:var(--text-dim);line-height:1.6;">Gestiona máquinas y calendario. Registra mantenimientos. Edita comentarios.</div>
+            <div style="font-size:12px;color:var(--text-dim);line-height:1.6;">Gestiona máquinas, calendario y ajustes. Registra mantenimientos y edita cualquier comentario. Puede gestionar usuarios no-admin (cambiar rol, resetear contraseña) pero NO crearlos ni tocar admins.</div>
           </div>
           <div style="padding:16px;background:var(--bg-soft);border-radius:4px;border-left:3px solid var(--text-mute);">
             <div style="font-weight:700;margin-bottom:6px;">👁 Consulta</div>
-            <div style="font-size:12px;color:var(--text-dim);line-height:1.6;">Consulta el panel y el historial. Puede registrar mantenimientos y editar comentarios (propios y ajenos).</div>
+            <div style="font-size:12px;color:var(--text-dim);line-height:1.6;">Consulta el panel, las máquinas y el historial. Registra mantenimientos y edita solo SUS propios comentarios.</div>
           </div>
         </div>
       </div>
