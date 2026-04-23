@@ -11,7 +11,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
 import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection,
-  query, onSnapshot, collectionGroup, getDocs, writeBatch
+  query, where, limit, onSnapshot, collectionGroup, getDocs, writeBatch
 } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
 
 // ============================================================
@@ -140,7 +140,31 @@ function showLogin() {
   document.getElementById('setupForm').style.display = 'none';
   document.getElementById('loginForm').style.display = 'block';
   hideSyncIndicator();
+  // Comprobar si ya existe algún admin para ocultar el enlace "Primera vez"
+  checkFirstSetupNeeded();
   setTimeout(() => document.getElementById('loginUser').focus(), 100);
+}
+
+async function checkFirstSetupNeeded() {
+  // Solo mostramos el enlace "Primera vez" si no hay ningún admin todavía.
+  // Las reglas públicas permiten leer users SOLO si tú eres el propio usuario o admin.
+  // Con las reglas actualizadas que pondremos, este chequeo puede fallar al
+  // no estar autenticado. Lo manejamos con try/catch.
+  const hint = document.getElementById('firstSetupHint');
+  if (!hint) return;
+  try {
+    const q = query(collection(db, 'users'), where('role', '==', 'admin'), limit(1));
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      hint.style.display = 'none';
+      return;
+    }
+  } catch (err) {
+    // Si las reglas bloquean la lectura, asumimos que hace falta setup
+    // (fail-safe: en el peor caso se ve el enlace pero el servidor lo bloqueará)
+    console.log('checkFirstSetup: no se pudo verificar, mostrando enlace por defecto');
+  }
+  hint.style.display = '';
 }
 
 async function showApp() {
@@ -244,11 +268,31 @@ document.getElementById('setupFormEl').addEventListener('submit', async (e) => {
     errEl.classList.add('show');
     return;
   }
+  // Verificar que no exista ya un admin
+  try {
+    const q = query(collection(db, 'users'), where('role', '==', 'admin'), limit(1));
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      errEl.textContent = 'Ya existe una cuenta de administrador. Pide a tu admin que cree tu cuenta.';
+      errEl.classList.add('show');
+      return;
+    }
+  } catch {
+    // Si falla (reglas restrictivas), intentamos crear y que las reglas bloqueen si hay admin
+  }
   try {
     const cred = await createUserWithEmailAndPassword(auth, email, pass);
-    await setDoc(doc(db, 'users', cred.user.uid), {
-      name, email, role: 'admin', createdAt: toISO(new Date())
-    });
+    try {
+      await setDoc(doc(db, 'users', cred.user.uid), {
+        name, email, role: 'admin', createdAt: toISO(new Date())
+      });
+    } catch (rulesErr) {
+      // Si las reglas bloquean: borrar la cuenta Auth y avisar
+      try { await cred.user.delete(); } catch {}
+      errEl.textContent = 'No se pudo crear el admin. Puede que ya exista uno. Contacta con el admin actual.';
+      errEl.classList.add('show');
+      return;
+    }
     await setDoc(doc(db, 'settings', 'global'), {
       workWeekdays: [1,2,3,4,5],
       globalResponsibleEmail: '',
