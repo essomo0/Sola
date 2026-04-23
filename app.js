@@ -111,14 +111,16 @@ function formatDateLong(d) {
 
 // ============================================================
 // PERMISSIONS
-// Todos pueden registrar mantenimientos y editar comentarios.
-// Admin/Editor gestionan máquinas y calendario. Admin gestiona usuarios.
+// Todos pueden registrar mantenimientos.
+// Consulta solo edita SUS comentarios. Editor/Admin editan cualquiera.
+// Editor ve y gestiona usuarios (excepto crear y excepto admins).
+// Admin gestiona todo.
 // ============================================================
 const ROLE_LABELS = { admin: 'Administrador', editor: 'Edición', viewer: 'Consulta' };
 const PERMS = {
-  admin: ['view', 'register', 'editComment', 'deleteRecord', 'manageMachines', 'manageCalendar', 'manageUsers', 'manageData'],
-  editor: ['view', 'register', 'editComment', 'manageMachines', 'manageCalendar'],
-  viewer: ['view', 'register', 'editComment']
+  admin: ['view', 'register', 'editOwnComment', 'editAnyComment', 'deleteRecord', 'manageMachines', 'manageCalendar', 'viewUsers', 'createUsers', 'manageNonAdminUsers', 'manageAdminUsers', 'manageData', 'manageSettings'],
+  editor: ['view', 'register', 'editOwnComment', 'editAnyComment', 'manageMachines', 'manageCalendar', 'viewUsers', 'manageNonAdminUsers', 'manageSettings'],
+  viewer: ['view', 'register', 'editOwnComment']
 };
 function can(p) {
   if (!currentUser) return false;
@@ -181,8 +183,12 @@ function applyUserUI() {
 
   document.querySelectorAll('[data-permission]').forEach(el => {
     const req = el.dataset.permission;
-    const allowed = (req === 'admin' && currentUser.role === 'admin')
-                 || (req === 'edit' && can('manageMachines'));
+    let allowed = false;
+    if (req === 'admin') allowed = currentUser.role === 'admin';
+    else if (req === 'edit') allowed = can('manageMachines');
+    else if (req === 'viewUsers') allowed = can('viewUsers');
+    else if (req === 'createUsers') allowed = can('createUsers');
+    else if (req === 'manageSettings') allowed = can('manageSettings');
     el.style.display = allowed ? '' : 'none';
   });
 
@@ -406,7 +412,8 @@ async function startListeners() {
     flashSync();
   }, (err) => console.error('Err settings:', err)));
 
-  if (currentUser.role === 'admin') {
+  if (can('viewUsers')) {
+    // admin y editor: listener en tiempo real
     unsubscribes.push(onSnapshot(collection(db, 'users'), (snap) => {
       state.users = snap.docs.map(d => ({ uid: d.id, ...d.data() }));
       renderUsers();
@@ -414,7 +421,7 @@ async function startListeners() {
       flashSync();
     }, (err) => console.error('Err users:', err)));
   } else {
-    // Para que viewer/editor puedan ver nombres en el historial
+    // viewer: solo una lectura inicial para poder mostrar nombres en el historial
     try {
       const snap = await getDocs(collection(db, 'users'));
       state.users = snap.docs.map(d => ({ uid: d.id, ...d.data() }));
@@ -1102,7 +1109,7 @@ document.querySelectorAll('.holiday-mode-btn').forEach(btn => {
 // ============================================================
 document.getElementById('userForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  if (currentUser.role !== 'admin') { toast('Solo admins', 'error'); return; }
+  if (!can('createUsers')) { toast('Solo admins pueden crear usuarios', 'error'); return; }
   const name = document.getElementById('u_name').value.trim();
   const email = document.getElementById('u_user').value.trim();
   const pass = document.getElementById('u_pass').value;
@@ -1121,35 +1128,60 @@ document.getElementById('userForm').addEventListener('submit', async (e) => {
 });
 
 function renderUsers() {
-  if (!currentUser || currentUser.role !== 'admin') return;
+  if (!currentUser || !can('viewUsers')) return;
   const tbody = document.getElementById('usersTbody');
   if (!tbody) return;
   document.getElementById('userCount').textContent = state.users.length + ' USUARIO' + (state.users.length !== 1 ? 'S' : '');
-  tbody.innerHTML = state.users.map(u => `
+
+  const iamAdmin = currentUser.role === 'admin';
+
+  tbody.innerHTML = state.users.map(u => {
+    const isSelf = u.uid === currentUser.uid;
+    const isAdminUser = u.role === 'admin';
+
+    // Regla: editor NO puede tocar admins (ni cambiar rol, ni resetear pass)
+    const canChangeThisRole = iamAdmin
+      ? !isSelf
+      : (can('manageNonAdminUsers') && !isAdminUser && !isSelf);
+    const canResetThisPass = iamAdmin
+      ? !isSelf
+      : (can('manageNonAdminUsers') && !isAdminUser && !isSelf);
+
+    // El selector de rol: si soy editor, oculto la opción admin (no puedo promocionar)
+    const roleOptions = iamAdmin
+      ? `
+        <option value="viewer" ${u.role === 'viewer' ? 'selected' : ''}>Consulta</option>
+        <option value="editor" ${u.role === 'editor' ? 'selected' : ''}>Edición</option>
+        <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Administrador</option>`
+      : `
+        <option value="viewer" ${u.role === 'viewer' ? 'selected' : ''}>Consulta</option>
+        <option value="editor" ${u.role === 'editor' ? 'selected' : ''}>Edición</option>
+        ${isAdminUser ? '<option value="admin" selected>Administrador</option>' : ''}`;
+
+    return `
     <tr>
       <td>
         <div style="display:flex;align-items:center;gap:10px;">
           <div class="user-avatar" style="width:28px;height:28px;background:var(--sola-beige);color:var(--sola-dark);">${(u.name || u.email || '?').charAt(0).toUpperCase()}</div>
           <div>
             <div style="font-weight:600;">${escapeHtml(u.name || '—')}</div>
-            ${u.uid === currentUser.uid ? '<div style="font-size:10px;color:var(--text-dim);">(tú)</div>' : ''}
+            ${isSelf ? '<div style="font-size:10px;color:var(--text-dim);">(tú)</div>' : ''}
           </div>
         </div>
       </td>
       <td><code style="font-family:'JetBrains Mono',monospace;font-size:12px;">${escapeHtml(u.email || '—')}</code></td>
       <td>
-        <select data-uid="${u.uid}" data-action="changeRole" ${u.uid === currentUser.uid ? 'disabled' : ''} style="padding:4px 8px;border:1px solid var(--border);border-radius:3px;background:var(--bg);font-family:inherit;font-size:12px;">
-          <option value="viewer" ${u.role === 'viewer' ? 'selected' : ''}>Consulta</option>
-          <option value="editor" ${u.role === 'editor' ? 'selected' : ''}>Edición</option>
-          <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Administrador</option>
+        <select data-uid="${u.uid}" data-action="changeRole" ${!canChangeThisRole ? 'disabled' : ''} style="padding:4px 8px;border:1px solid var(--border);border-radius:3px;background:var(--bg);font-family:inherit;font-size:12px;">
+          ${roleOptions}
         </select>
       </td>
       <td style="color:var(--text-dim);font-family:'JetBrains Mono',monospace;font-size:11px;">${u.createdAt || '—'}</td>
       <td style="text-align:right;">
-        <button class="btn btn-ghost btn-sm" data-uid="${u.uid}" data-action="resetpass">Reset contraseña</button>
+        ${canResetThisPass ? `<button class="btn btn-ghost btn-sm" data-uid="${u.uid}" data-action="resetpass">Reset contraseña</button>` : ''}
       </td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
   tbody.querySelectorAll('select[data-action=changeRole]').forEach(sel => {
     sel.addEventListener('change', () => changeRole(sel.dataset.uid, sel.value));
   });
@@ -1159,11 +1191,17 @@ function renderUsers() {
 }
 
 async function changeRole(userId, newRole) {
-  if (currentUser.role !== 'admin') return;
-  if (userId === currentUser.uid) { toast('No puedes cambiar tu propio rol', 'error'); return; }
+  if (!can('manageNonAdminUsers') && !can('manageAdminUsers')) { toast('Sin permiso', 'error'); return; }
+  if (userId === currentUser.uid) { toast('No puedes cambiar tu propio rol', 'error'); renderUsers(); return; }
   const u = state.users.find(x => x.uid === userId);
   if (!u) return;
-  if (u.role === 'admin' && newRole !== 'admin') {
+  const iamAdmin = currentUser.role === 'admin';
+  // Editor no puede tocar admins ni promocionar a admin
+  if (!iamAdmin) {
+    if (u.role === 'admin') { toast('No puedes cambiar el rol de un admin', 'error'); renderUsers(); return; }
+    if (newRole === 'admin') { toast('No puedes promocionar a admin', 'error'); renderUsers(); return; }
+  }
+  if (u.role === 'admin' && newRole !== 'admin' && iamAdmin) {
     const adminCount = state.users.filter(x => x.role === 'admin').length;
     if (adminCount <= 1) { toast('Debe haber al menos un admin', 'error'); renderUsers(); return; }
   }
@@ -1172,9 +1210,11 @@ async function changeRole(userId, newRole) {
 }
 
 async function resetUserPassword(userId) {
-  if (currentUser.role !== 'admin') return;
+  if (!can('manageNonAdminUsers') && !can('manageAdminUsers')) { toast('Sin permiso', 'error'); return; }
   const u = state.users.find(x => x.uid === userId);
   if (!u) return;
+  const iamAdmin = currentUser.role === 'admin';
+  if (!iamAdmin && u.role === 'admin') { toast('No puedes resetear la contraseña de un admin', 'error'); return; }
   if (!confirm(`¿Enviar email de reset a ${u.email}?`)) return;
   try { await sendPasswordResetEmail(auth, u.email); toast('Email enviado', 'success'); }
   catch (err) { toast(mapAuthError(err), 'error'); }
@@ -1346,13 +1386,14 @@ function renderHistoryTable(machineId, records) {
           ? `<span class="history-comment">${escapeHtml(r.note)}</span>${edited}`
           : `<span class="history-comment history-comment-empty">Sin comentario</span>`;
         const canDelete = currentUser && currentUser.role === 'admin';
-        const canEdit = can('editComment');
+        // Viewer solo edita los suyos; admin/editor pueden editar cualquiera
+        const canEditThis = can('editAnyComment') || (can('editOwnComment') && r.by === currentUser.uid);
         return `<tr>
           <td>${formatDateES(fromISO(r.date))}</td>
           <td>${escapeHtml(r.byName || '—')}</td>
           <td>${noteHtml}</td>
           <td style="text-align:right;">
-            ${canEdit ? `<button class="btn btn-ghost btn-sm" data-hist-action="editComment" data-mid="${machineId}" data-hid="${r.id}">Editar</button>` : ''}
+            ${canEditThis ? `<button class="btn btn-ghost btn-sm" data-hist-action="editComment" data-mid="${machineId}" data-hid="${r.id}">Editar</button>` : ''}
             ${canDelete ? `<button class="btn btn-danger btn-sm" data-hist-action="deleteRecord" data-mid="${machineId}" data-hid="${r.id}">🗑</button>` : ''}
           </td>
         </tr>`;
@@ -1389,7 +1430,12 @@ document.getElementById('editCommentModal').addEventListener('click', (e) => {
 document.getElementById('editCommentForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   if (!editingCommentCtx) return;
-  if (!requirePerm('editComment')) return;
+  // Verificar permisos: si es mi comentario o soy editor/admin
+  const h = (state.historyByMachine[editingCommentCtx.mid] || []).find(x => x.id === editingCommentCtx.hid);
+  if (!h) { toast('Registro no encontrado', 'error'); return; }
+  const isMine = h.by === currentUser.uid;
+  const allowed = can('editAnyComment') || (can('editOwnComment') && isMine);
+  if (!allowed) { toast('Sin permiso para editar este comentario', 'error'); return; }
   const newText = document.getElementById('editCommentText').value.trim();
   try {
     await updateDoc(doc(db, 'machines', editingCommentCtx.mid, 'history', editingCommentCtx.hid), {
@@ -1405,9 +1451,11 @@ document.getElementById('editCommentForm').addEventListener('submit', async (e) 
 });
 
 function openEditComment(machineId, histId) {
-  if (!requirePerm('editComment')) return;
   const h = (state.historyByMachine[machineId] || []).find(x => x.id === histId);
   if (!h) return;
+  const isMine = h.by === currentUser.uid;
+  const allowed = can('editAnyComment') || (can('editOwnComment') && isMine);
+  if (!allowed) { toast('Solo puedes editar tus propios comentarios', 'error'); return; }
   editingCommentCtx = { mid: machineId, hid: histId };
   const m = state.machines.find(x => x.id === machineId);
   document.getElementById('editCommentContext').textContent =
