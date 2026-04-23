@@ -1,0 +1,74 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function userRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isAdmin() {
+      return isSignedIn() && userRole() == 'admin';
+    }
+    function canManageMachines() {
+      return isSignedIn() && (userRole() == 'admin' || userRole() == 'editor');
+    }
+    function hasUserDoc() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    // USUARIOS
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow create: if isSignedIn() && ((request.auth.uid == userId && !exists(/databases/$(database)/documents/users/$(userId))) || isAdmin());
+      allow update, delete: if isAdmin();
+    }
+
+    // MÁQUINAS
+    //  - Lectura: todos autenticados con perfil
+    //  - Crear/borrar/edición general: admin o editor
+    //  - Actualización parcial (solo campos de último mantenimiento): TODOS (incluido viewer)
+    //    para permitir que cualquier operario registre un mantenimiento realizado.
+    match /machines/{machineId} {
+      allow read: if hasUserDoc();
+      allow create, delete: if canManageMachines();
+      allow update: if hasUserDoc() && (
+        canManageMachines() ||
+        // viewers solo pueden actualizar estos campos
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['lastMaintenance', 'lastMaintenanceBy', 'lastMaintenanceByName', 'lastMaintenanceNote'])
+      );
+
+      // SUBCOLECCIÓN HISTORIAL
+      // - Lectura: todos con perfil
+      // - Escribir/editar: todos con perfil (para registrar y editar comentarios)
+      // - Borrar registros: solo admin
+      match /history/{historyId} {
+        allow read: if hasUserDoc();
+        allow create, update: if hasUserDoc();
+        allow delete: if isAdmin();
+      }
+    }
+
+    // FESTIVOS
+    match /holidays/{date} {
+      allow read: if hasUserDoc();
+      allow write: if canManageMachines();
+    }
+
+    // AJUSTES
+    match /settings/{settingId} {
+      allow read: if hasUserDoc();
+      allow write: if canManageMachines();
+    }
+
+    // NOTIFICACIONES ENVIADAS (gestionadas por Google Apps Script)
+    // El script se autentica con el OAuth del propietario del proyecto,
+    // que tiene acceso total. Estas reglas son para la app web:
+    match /sentNotifications/{notifId} {
+      allow read: if hasUserDoc();
+      allow write: if isAdmin();
+    }
+  }
+}
